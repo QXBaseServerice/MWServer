@@ -58,34 +58,16 @@ func (rc *MWServer) BindMWServer() (err error) {
 	return nil
 }
 
-func (rc *MWServer) watchWarningConfigChange() {
-	path := rc.clusterClient.warningConfigPath
-	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(configStr string, err error) {
-		rc.Log.Infof(":【%s】的值发生了变化", path)
-		if err != nil {
-			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
-			return
-		}
-		var c WarningConfig
-		if err := json.Unmarshal([]byte(configStr), &c); err != nil {
-			rc.Log.Errorf("%s的值无法解析为WarningConfig(非法JSON)", path)
-			rc.Log.Errorf("configStr:%s", configStr)
-			panic(fmt.Errorf("%s的值无法解析为WarningConfig(非法JSON)", path))
-		}
-		rc.warningConfig = c
-	})
-}
-
 func (rc *MWServer) watchSystemNodesChange() {
 	path := rc.clusterClient.monitorConfigPath
 	rc.clusterClient.WatchChildrenChangedAndNotifyNow(path, func(systemNameList []string, err error) {
-		rc.Log.Infof(":【%s】的子节点发生了变化:%v", path, systemNameList)
+		rc.Log.Infof(":监控系统【%s】的子节点发生了变化:%v", path, systemNameList)
 		if err != nil {
 			rc.Log.Errorf("系统%s的监控异常：%v", path, err)
 			return
 		}
 
-		added, delted := getArrDifferentFromMap(systemNameList, rc.monitorSystems.GetAll())
+		added, delted := getArrDifferentFromMap(rc.monitorSystems.GetAll(), systemNameList)
 		rc.Log.Infof("增加系统：%v", added)
 		rc.Log.Infof("移除系统：%v", delted)
 
@@ -101,7 +83,7 @@ func (rc *MWServer) watchSystemNodesChange() {
 
 func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(jsonstr string, err error) {
-		rc.Log.Infof(":【%s】的值发生了变化", path)
+		rc.Log.Infof(":监控系统【%s】的配置值发生了变化", path)
 		if err != nil {
 			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
 			return
@@ -142,8 +124,11 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 		}
 
 		addedConfigs, deletedConfigs := getMapDifferentFromMap(rc.monitorConfigs.GetAll(), newPathConfigs.GetAll())
+		rc.Log.Info("OVER：", addedConfigs, deletedConfigs)
 		for _, item := range addedConfigs {
 			config := newPathConfigs.Get(item).(*MonitorConfig)
+			rc.Log.Infof("->开始监控对【%s】的【%s】的监控", config.Path, config.WatchType)
+
 			switch config.WatchType {
 			case "children_count":
 				rc.monitoringNodes(config)
@@ -176,6 +161,24 @@ func (rc *MWServer) removeSystemConfigChangeListner(systemName string) {
 			rc.removeMonitorConfigChangeListner(c)
 		}
 	}
+}
+
+func (rc *MWServer) watchWarningConfigChange() {
+	path := rc.clusterClient.warningConfigPath
+	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(configStr string, err error) {
+		rc.Log.Infof(":报警配置【%s】的值发生了变化", path)
+		if err != nil {
+			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
+			return
+		}
+		var c WarningConfig
+		if err := json.Unmarshal([]byte(configStr), &c); err != nil {
+			rc.Log.Errorf("%s的值无法解析为WarningConfig(非法JSON)", path)
+			rc.Log.Errorf("configStr:%s", configStr)
+			panic(fmt.Errorf("%s的值无法解析为WarningConfig(非法JSON)", path))
+		}
+		rc.warningConfig = c
+	})
 }
 
 func (rc *MWServer) removeMonitorConfigChangeListner(config *MonitorConfig) {
@@ -236,8 +239,8 @@ func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg string)
 				}
 			}
 
-			switch {
-			case member.RecvSMS:
+			if member.RecvSMS {
+				rc.Log.Infof("向【%s】发送短信告警:%s", member.FullName, msg)
 				way := rc.warningConfig.Ways["sms"]
 				params, err := rc.clusterClient.GetSMSConfig(way.Channel)
 				if err != nil {
@@ -249,17 +252,15 @@ func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg string)
 						rc.Log.Errorf("通过短信发送报警消息异常,err:%s", err)
 					}
 				}
-				fallthrough // 贯穿
-			case member.RecvWeixin:
-				fmt.Println("TODO 发送微信消息")
-				fallthrough
-			case member.RecvEmail:
-				fmt.Println("TODO 发送邮件")
-				fallthrough
-			default:
-				break
 			}
-
+			if member.RecvWeixin {
+				rc.Log.Infof("向【%s】发送微信告警:%s", member.FullName, msg)
+				fmt.Println("TODO 发送微信消息")
+			}
+			if member.RecvEmail {
+				rc.Log.Infof("向【%s】发送邮件告警:%s", member.FullName, msg)
+				fmt.Println("TODO 发送邮件")
+			}
 		}
 	}
 
@@ -279,29 +280,28 @@ func (rc *MWServer) IsMasterServer(items []*MWServerItem) bool {
 func (rc *MWServer) monitoringNodesData(config *MonitorConfig) {
 	p := config.Path
 	rc.clusterClient.WatchChildrenChangedAndNotifyNow(p, func(children []string, err error) {
+		rc.Log.Infof("->PATH监控(s)：【%s】的子节点发生改变:%v", p, children)
 		if err != nil {
 			rc.Log.Errorf("监控节点%s异常：%v", p, err)
 			return
 		}
 		for _, nodeName := range children {
 			childPath := p + "/" + nodeName
-			if rc.currentListenPaths.Exists(childPath) {
-				continue
-			}
 			rc.clusterClient.WatchValueChangedAndNotifyNow(childPath, func(value string, err error) {
+				rc.Log.Infof("->PATH监控(s)：【%s】的子节点【%s】值发生改变:%v", p, nodeName, value)
 				if err != nil {
 					rc.Log.Errorf("监控节点%s的值异常:%v", p, err)
 					return
 				}
 				go rc.monitoringCore(value, config)
 			})
-			rc.currentListenPaths.Set(childPath, true)
 		}
 	})
 }
 
 func (rc *MWServer) monitoringNodes(config *MonitorConfig) {
 	rc.clusterClient.WatchChildrenChangedAndNotifyNow(config.Path, func(children []string, err error) {
+		rc.Log.Infof("->PATH监控：【%s】的子节点发生变化:%v", config.Path, children)
 		if err != nil {
 			rc.Log.Errorf("监控节点%s异常：%v", config.Path, err)
 			return
@@ -312,6 +312,7 @@ func (rc *MWServer) monitoringNodes(config *MonitorConfig) {
 
 func (rc *MWServer) monitoringData(config *MonitorConfig) {
 	rc.clusterClient.WatchValueChangedAndNotifyNow(config.Path, func(value string, err error) {
+		rc.Log.Infof("->PATH监控：【%s】的值发生变化:%v", config.Path, value)
 		if err != nil {
 			rc.Log.Errorf("监控节点%s异常：%v", config.Path, err)
 			return

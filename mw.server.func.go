@@ -165,17 +165,17 @@ func deepCopy(src interface{}) (dst interface{}, err error) {
 	return dst, err
 }
 
-func getArrDifferentFromMap(arr []string, m map[string]interface{}) (added, deleted []string) {
-	var arrMap map[string]bool
+func getArrDifferentFromMap(m map[string]interface{}, arr []string) (added, deleted []string) {
+	arrMap := make(map[string]bool)
 	for _, item := range arr {
 		arrMap[item] = true
 		if m[item] == nil {
-			deleted = append(deleted, item)
+			added = append(added, item)
 		}
 	}
 	for key := range m {
 		if arrMap[key] == false {
-			added = append(added, key)
+			deleted = append(deleted, key)
 		}
 	}
 	return

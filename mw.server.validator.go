@@ -17,6 +17,7 @@ func validate(property string, value interface{}, rules []MapString) (level, cur
 	case "balance":
 		currval = value.(string)
 		level, limitval = moreLessMoreDangerous(currval, rules) // TODO:后面把moreLessMoreDangerous和moreGreaterMoreDangerous的入参类型定下来，取消interface{}类型
+		ip = "0.0.0.0"
 	case "cpu":
 		o, err := getValueFromJSONString(value.(string), property, true)
 		if err != nil {
@@ -29,6 +30,10 @@ func validate(property string, value interface{}, rules []MapString) (level, cur
 		}
 		currval = fmt.Sprint(o)
 		level, limitval = moreGreaterMoreDangerous(currval, rules)
+		o, err = getValueFromJSONString(value.(string), "address", true)
+		if err == nil && o != nil {
+			ip = fmt.Sprint(o)
+		}
 	case "memory":
 		o, err := getValueFromJSONString(value.(string), "sys.mem.0.usedPercent", true)
 		if err != nil {
@@ -41,11 +46,12 @@ func validate(property string, value interface{}, rules []MapString) (level, cur
 		}
 		currval = fmt.Sprint(o)
 		level, limitval = moreGreaterMoreDangerous(currval, rules)
+		o, err = getValueFromJSONString(value.(string), "address", true)
+		if err == nil && o != nil {
+			ip = fmt.Sprint(o)
+		}
 	}
-	o, err := getValueFromJSONString(value.(string), "address", true)
-	if err == nil && o != nil {
-		ip = fmt.Sprint(o)
-	}
+
 	return level, currval, limitval, ip
 }
 

@@ -18,7 +18,6 @@ type MWServer struct {
 	monitorConfigs        *concurrent.ConcurrentMap // 监控配置 map[string]MonitorConfig
 	warningConfig         WarningConfig             // 报警配置
 	sameIPWarningMessages *concurrent.ConcurrentMap // 同一个IP的报警消息(有效期内只发送一次)
-	currentListenPaths    *concurrent.ConcurrentMap // 当前已监听的路径 map[string]string
 	clusterClient         *MWClusterClient
 	startSync             base.Sync
 	clusterServers        []string
@@ -38,7 +37,6 @@ func NewMWServer(conf *config.SysConfig) (rc *MWServer, err error) {
 	rc.monitorSystems = concurrent.NewConcurrentMap()
 	rc.monitorConfigs = concurrent.NewConcurrentMap()
 
-	rc.currentListenPaths = concurrent.NewConcurrentMap()
 	rc.startSync = base.NewSync(1)
 	rc.Log, err = logger.Get(rc.loggerName)
 	if err != nil {
