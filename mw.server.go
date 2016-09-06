@@ -36,6 +36,7 @@ func NewMWServer(conf *config.SysConfig) (rc *MWServer, err error) {
 
 	rc.monitorSystems = concurrent.NewConcurrentMap()
 	rc.monitorConfigs = concurrent.NewConcurrentMap()
+	rc.sameIPWarningMessages = concurrent.NewConcurrentMap()
 
 	rc.startSync = base.NewSync(1)
 	rc.Log, err = logger.Get(rc.loggerName)

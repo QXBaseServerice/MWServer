@@ -280,6 +280,7 @@ func (rc *MWServer) IsMasterServer(items []*MWServerItem) bool {
 }
 
 func (rc *MWServer) monitoringNodesData(config *MonitorConfig) {
+	defer rc.recover()
 	p := config.Path
 	rc.clusterClient.WatchChildrenChangedAndNotifyNow(p, func(children []string, err error) {
 		rc.Log.Infof("->PATH监控(s)：【%s】的子节点发生改变:%v", p, children)
@@ -324,6 +325,8 @@ func (rc *MWServer) monitoringData(config *MonitorConfig) {
 }
 
 func (rc *MWServer) monitoringCore(raw string, _pathConfig *MonitorConfig) {
+	defer rc.recover()
+
 	for prop, rules := range _pathConfig.Properties {
 		level, currval, limitval, ip := validate(prop, raw, rules)
 		if level == "" {
@@ -339,12 +342,16 @@ func (rc *MWServer) monitoringCore(raw string, _pathConfig *MonitorConfig) {
 		// 避免同一台机器的cpu,memory,disk的重复报警
 		if isContain, err := regexp.MatchString("^cpu|memory|disk$", prop); err == nil && isContain {
 			key := ip + "_" + prop
-			saveDate, _ := rc.sameIPWarningMessages.Get(key)
-			diff, _ := timeSubNowSeconds(saveDate.(string))
-			rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 设置到map
-			if 0-diff <= 5 {
-				fmt.Println("5秒内，相同IP的相同属性报警，忽略:", key)
-				continue
+			saveDate, isExists := rc.sameIPWarningMessages.Get(key)
+			if isExists {
+				diff, _ := timeSubNowSeconds(saveDate.(string))
+				if 0-diff <= 5 {
+					fmt.Println("5秒内，相同IP的相同属性报警，忽略:", key)
+					rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 更新时间戳
+					continue
+				}
+			} else {
+				rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 设置到map
 			}
 		}
 
