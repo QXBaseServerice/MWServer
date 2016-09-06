@@ -126,7 +126,8 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 		addedConfigs, deletedConfigs := getMapDifferentFromMap(rc.monitorConfigs.GetAll(), newPathConfigs.GetAll())
 		rc.Log.Info("OVER：", addedConfigs, deletedConfigs)
 		for _, item := range addedConfigs {
-			config := newPathConfigs.Get(item).(*MonitorConfig)
+			c, _ := newPathConfigs.Get(item)
+			config := c.(*MonitorConfig)
 			rc.Log.Infof("->开始监控对【%s】的【%s】的监控", config.Path, config.WatchType)
 
 			switch config.WatchType {
@@ -142,13 +143,14 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 		}
 
 		for _, item := range deletedConfigs {
-			rc.removeMonitorConfigChangeListner(rc.monitorConfigs.Get(item).(*MonitorConfig))
+			c, _ := rc.monitorConfigs.Get(item)
+			rc.removeMonitorConfigChangeListner(c.(*MonitorConfig))
 		}
 	})
 }
 
 func (rc *MWServer) removeSystemConfigChangeListner(systemName string) {
-	if rc.monitorSystems.Get(systemName) == nil {
+	if _, ok := rc.monitorSystems.Get(systemName); !ok {
 		return
 	}
 
@@ -235,7 +237,7 @@ func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg string)
 					continue
 				} else {
 					rc.Log.Infof("缓存起来：%s", cachekey)
-					memcacheClient.Add(cachekey, "Have Sent!", int32(member.Frequency))
+					memcacheClient.Add(cachekey, "Have Sent!", int(member.Frequency))
 				}
 			}
 
@@ -337,7 +339,7 @@ func (rc *MWServer) monitoringCore(raw string, _pathConfig *MonitorConfig) {
 		// 避免同一台机器的cpu,memory,disk的重复报警
 		if isContain, err := regexp.MatchString("^cpu|memory|disk$", prop); err == nil && isContain {
 			key := ip + "_" + prop
-			saveDate := rc.sameIPWarningMessages.Get(key)
+			saveDate, _ := rc.sameIPWarningMessages.Get(key)
 			diff, _ := timeSubNowSeconds(saveDate.(string))
 			rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 设置到map
 			if 0-diff <= 5 {

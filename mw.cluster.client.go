@@ -352,8 +352,8 @@ func (client *MWClusterClient) GetSourceConfig(typeName string, name string) (co
 	dataMap.Set("type", typeName)
 	dataMap.Set("name", name)
 	path := dataMap.Translate(p_varConfig)
-	cfg := client.configCache.Get(path)
-	if cfg != nil {
+	cfg, ok := client.configCache.Get(path)
+	if ok {
 		config = cfg.(string)
 		return
 	}
