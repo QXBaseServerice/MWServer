@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 /*------------- 系统用的配置(最终从zookeeper转换过来) -------------*/
 
@@ -11,6 +14,20 @@ type MonitorConfig struct {
 	WatchType      string
 	Properties     map[string][]MapString
 	TplMsgs        map[string]string
+	parentKey      string
+	outOfConfigMap bool
+}
+
+func (config *MonitorConfig) getCopier() (dst *MonitorConfig) {
+	b, err := json.Marshal(config)
+	if err != nil {
+		panic(fmt.Errorf("UNREACHABLE:源对象[%v]无法被转换成JSON", config))
+	}
+	err = json.Unmarshal(b, &dst)
+	if err != nil {
+		panic(fmt.Errorf("UNREACHABLE:源对象[%v]无法被复制", string(b)))
+	}
+	return dst
 }
 
 func (config *MonitorConfig) getKey() string {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -17,7 +18,7 @@ func validate(property string, value interface{}, rules []MapString) (level, cur
 	case "balance":
 		currval = value.(string)
 		level, limitval = moreLessMoreDangerous(currval, rules) // TODO:后面把moreLessMoreDangerous和moreGreaterMoreDangerous的入参类型定下来，取消interface{}类型
-		ip = "0.0.0.0"
+		ip = "NONEED"
 	case "cpu":
 		o, err := getValueFromJSONString(value.(string), property, true)
 		if err != nil {
@@ -30,10 +31,7 @@ func validate(property string, value interface{}, rules []MapString) (level, cur
 		}
 		currval = fmt.Sprint(o)
 		level, limitval = moreGreaterMoreDangerous(currval, rules)
-		o, err = getValueFromJSONString(value.(string), "address", true)
-		if err == nil && o != nil {
-			ip = fmt.Sprint(o)
-		}
+		ip = getIPFromSnap(value.(string))
 	case "memory":
 		o, err := getValueFromJSONString(value.(string), "sys.mem.0.usedPercent", true)
 		if err != nil {
@@ -46,10 +44,7 @@ func validate(property string, value interface{}, rules []MapString) (level, cur
 		}
 		currval = fmt.Sprint(o)
 		level, limitval = moreGreaterMoreDangerous(currval, rules)
-		o, err = getValueFromJSONString(value.(string), "address", true)
-		if err == nil && o != nil {
-			ip = fmt.Sprint(o)
-		}
+		ip = getIPFromSnap(value.(string))
 	}
 
 	return level, currval, limitval, ip
@@ -115,4 +110,19 @@ func compare(value interface{}, rules []MapString, compareType int) (level, sadV
 		}
 	}
 	return level, sadValue
+}
+
+func getIPFromSnap(jsonstr string) (ip string) {
+	o, err := getValueFromJSONString(jsonstr, "address", true)
+	if err == nil && o != nil {
+		x := o.(string)
+		if strings.Index(x, ":") != -1 {
+			ip = fmt.Sprint(strings.Split(x, ":")[0])
+		} else {
+			ip = fmt.Sprint(o)
+		}
+	} else {
+		ip = "NOTFOUND"
+	}
+	return ip
 }

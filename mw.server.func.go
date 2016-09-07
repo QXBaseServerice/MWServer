@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/arsgo/lib4go/concurrent"
 	"github.com/arsgo/lib4go/net"
 )
 
@@ -165,32 +166,52 @@ func deepCopy(src interface{}) (dst interface{}, err error) {
 	return dst, err
 }
 
-func getArrDifferentFromMap(m map[string]interface{}, arr []string) (added, deleted []string) {
-	arrMap := make(map[string]bool)
-	for _, item := range arr {
-		arrMap[item] = true
-		if m[item] == nil {
+func getArrDifferentFromMap(old map[string]interface{}, new []string) (added, deleted []string) {
+	newMap := make(map[string]bool)
+	for _, item := range new {
+		newMap[item] = true
+		if old[item] == nil {
 			added = append(added, item)
 		}
 	}
-	for key := range m {
-		if arrMap[key] == false {
+	for key := range old {
+		if newMap[key] == false {
 			deleted = append(deleted, key)
 		}
 	}
 	return
 }
 
-func getMapDifferentFromMap(m1 map[string]interface{}, m2 map[string]interface{}) (added, deleted []string) {
-	for key := range m1 {
-		if m2[key] == nil {
+func getMapDifferentFromMap(old map[string]interface{}, new map[string]interface{}) (added, deleted []string) {
+	for key := range old {
+		if new[key] == nil {
 			deleted = append(deleted, key)
 		}
 	}
-	for key := range m2 {
-		if m1[key] == nil {
+	for key := range new {
+		if old[key] == nil {
 			added = append(added, key)
 		}
 	}
 	return
+}
+
+func getArrDifferentFromArr(old []string, new []string) (added, deleted []string) {
+	oldMap := make(map[string]interface{})
+	newMap := make(map[string]interface{})
+	for _, item := range old {
+		oldMap[item] = true
+	}
+	for _, item := range new {
+		newMap[item] = true
+	}
+	return getMapDifferentFromMap(oldMap, newMap)
+}
+
+func getAllKeys(m *concurrent.ConcurrentMap) (keys []string) {
+	kvs := m.GetAll()
+	for key := range kvs {
+		keys = append(keys, key)
+	}
+	return keys
 }

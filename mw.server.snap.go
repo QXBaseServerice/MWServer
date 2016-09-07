@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/arsgo/ars/snap"
@@ -11,19 +10,18 @@ import (
 
 //MWSnap RC server快照信息
 type MWSnap struct {
-	mwServer *MWServer
-	Domain   string `json:"domain"`
-	path     string
-	Address  string      `json:"address"`
-	Server   string      `json:"server"`
-	Refresh  int         `json:"refresh"`
-	Version  string      `json:"version"`
-	CPU      string      `json:"cpu"`
-	Mem      string      `json:"mem"`
-	Disk     string      `json:"disk"`
-	Last     string      `json:"last"`
-	Snap     interface{} `json:"snap"`
-	Cache    interface{} `json:"cache"`
+	mwServer   *MWServer
+	Domain     string `json:"domain"`
+	path       string
+	Address    string      `json:"address"`
+	Server     string      `json:"server"`
+	Refresh    int         `json:"refresh"`
+	Version    string      `json:"version"`
+	CPU        string      `json:"cpu"`
+	Mem        string      `json:"mem"`
+	Disk       string      `json:"disk"`
+	Last       string      `json:"last"`
+	Monitoring interface{} `json:"monitoring"`
 }
 
 //GetServicesSnap 获取RC服务的快照信息
@@ -34,6 +32,16 @@ func (rs MWSnap) GetServicesSnap(services map[string]interface{}) string {
 	snap.Mem = sysinfo.GetAvaliabeMem().Used
 	snap.Disk = sysinfo.GetAvaliabeDisk().Used
 
+	if rs.mwServer.monitorSystems.GetLength() > 0 {
+		services["systems"] = rs.mwServer.monitorSystems.GetAll()
+	}
+	if rs.mwServer.monitorConfigs.GetLength() > 0 {
+		services["paths"] = getAllKeys(rs.mwServer.monitorConfigs)
+	}
+	if rs.mwServer.monitorChildrenValue.GetLength() > 0 {
+		services["children"] = rs.mwServer.monitorChildrenValue.GetAll()
+	}
+
 	/*rpcs := rs.mwServer.rpcServerCollector.Get()
 	if len(rpcs) > 0 {
 		services["rpc"] = rpcs
@@ -42,10 +50,7 @@ func (rs MWSnap) GetServicesSnap(services map[string]interface{}) string {
 	if len(schedulers) > 0 {
 		services["jobs"] = schedulers
 	}*/
-	cache := make(map[string]interface{})
-	//cache["rpc"] = rs.mwServer.spRPCClient.GetSnap()
-	snap.Cache = cache
-	snap.Snap = services
+	snap.Monitoring = services
 
 	buffer, _ := json.Marshal(&snap)
 	return string(buffer)
@@ -54,9 +59,6 @@ func (rs MWSnap) GetServicesSnap(services map[string]interface{}) string {
 //startRefreshSnap 启动定时刷新
 func (rc *MWServer) startRefreshSnap() {
 	defer rc.recover()
-
-	fmt.Println("---->startRefreshSnap:", time.Second, time.Duration(rc.snap.Refresh))
-
 	snap.Bind(time.Second*time.Duration(rc.snap.Refresh), rc.updateSnap)
 }
 
@@ -65,13 +67,6 @@ func (rc *MWServer) setDefSnap() {
 }
 
 func (rc *MWServer) updateSnap(services map[string]interface{}) {
-	rc.snapLogger.Info(" -> 更新 rc server快照信息")
-
-	fmt.Println("rc.clusterClient.domain:", rc.clusterClient.domain)
-
-	fmt.Println("rc.snap.path:", rc.snap.path)
-
-	fmt.Println("rc.snap.GetServicesSnap(services):", rc.snap.GetServicesSnap(services))
-
+	rc.snapLogger.Info(" -> 更新 mw server快照信息")
 	rc.clusterClient.SetNode(rc.snap.path, rc.snap.GetServicesSnap(services))
 }

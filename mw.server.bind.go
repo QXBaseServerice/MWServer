@@ -61,18 +61,19 @@ func (rc *MWServer) BindMWServer() (err error) {
 func (rc *MWServer) watchSystemNodesChange() {
 	path := rc.clusterClient.monitorConfigPath
 	rc.clusterClient.WatchChildrenChangedAndNotifyNow(path, func(systemNameList []string, err error) {
-		rc.Log.Infof(":监控系统【%s】的子节点发生了变化:%v", path, systemNameList)
+		//rc.Log.Infof("——> 系统【%s】的子节点发生了变化:%v", path, systemNameList)
 		if err != nil {
 			rc.Log.Errorf("系统%s的监控异常：%v", path, err)
 			return
 		}
 
 		added, delted := getArrDifferentFromMap(rc.monitorSystems.GetAll(), systemNameList)
-		rc.Log.Infof("增加系统：%v", added)
-		rc.Log.Infof("移除系统：%v", delted)
+		//rc.Log.Infof("增加系统：%v", added)
+		//rc.Log.Infof("移除系统：%v", delted)
 
 		for _, systemName := range added {
-			go rc.watchSystemConfigChange(systemName, path+"/"+systemName)
+			p := fmt.Sprintf("%s/%s", path, systemName)
+			go rc.watchSystemConfigChange(systemName, p)
 		}
 
 		for _, systemName := range delted {
@@ -82,8 +83,11 @@ func (rc *MWServer) watchSystemNodesChange() {
 }
 
 func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
+	// 添加到已监控系统列表
+	rc.monitorSystems.Set(systemName, path)
+
 	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(jsonstr string, err error) {
-		rc.Log.Infof(":监控系统【%s】的配置值发生了变化", path)
+		//rc.Log.Infof("——> 监控系统【%s】的配置值发生了变化", path)
 		if err != nil {
 			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
 			return
@@ -101,7 +105,6 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 		for i, len := 0, len(m); i < len; i++ {
 			for _, item := range m[i].Paths {
 				if !strings.HasSuffix(item, "/*") {
-					// path+watchtype 作为索引
 					c := &MonitorConfig{
 						Path: item, SystemName: systemName, SystemFullName: "未设置", WatchType: m[i].WatchType,
 						Properties: m[i].Properties, TplMsgs: m[i].Msgs}
@@ -114,7 +117,6 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 					continue
 				}
 				for _, child := range childrens {
-					// path+watchtype 作为索引
 					c := &MonitorConfig{
 						Path: strings.TrimRight(item, "*") + child, SystemName: systemName, SystemFullName: "未设置", WatchType: m[i].WatchType,
 						Properties: m[i].Properties, TplMsgs: m[i].Msgs}
@@ -124,11 +126,10 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 		}
 
 		addedConfigs, deletedConfigs := getMapDifferentFromMap(rc.monitorConfigs.GetAll(), newPathConfigs.GetAll())
-		rc.Log.Info("OVER：", addedConfigs, deletedConfigs)
+
 		for _, item := range addedConfigs {
 			c, _ := newPathConfigs.Get(item)
 			config := c.(*MonitorConfig)
-			rc.Log.Infof("->开始监控对【%s】的【%s】的监控", config.Path, config.WatchType)
 
 			switch config.WatchType {
 			case "children_count":
@@ -149,13 +150,141 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 	})
 }
 
+func (rc *MWServer) monitoringNodesData(config *MonitorConfig) {
+	defer rc.recover()
+	// 添加到已监控路径列表
+	if !config.outOfConfigMap {
+		rc.monitorConfigs.Set(config.getKey(), config)
+	}
+
+	p := config.Path
+	rc.clusterClient.WatchChildrenChangedAndNotifyNow(p, func(children []string, err error) {
+		//rc.Log.Infof("——> PATH监控(s)：【%s】的子节点发生了改变:%v", p, children)
+		if err != nil {
+			rc.Log.Errorf("监控节点%s异常：%v", p, err)
+			return
+		}
+
+		var oldChildren []string
+		o, isExists := rc.monitorChildrenValue.Get(config.getKey())
+		if !isExists {
+			oldChildren = []string{}
+		} else {
+			oldChildren = o.([]string)
+		}
+		rc.monitorChildrenValue.Set(config.getKey(), children) // 更新此节点的已监控子节点集合
+
+		added, deleted := getArrDifferentFromArr(oldChildren, children)
+
+		getChildMonitorConfig := func(realpath string, parentConfig *MonitorConfig) *MonitorConfig {
+			child := parentConfig.getCopier()
+			child.parentKey = parentConfig.getKey()
+			child.outOfConfigMap = true // 子节点并未配置到zk，为了计算配置路径的差异化，将不会被包含到rc.monitorConfigs
+			child.Path = realpath
+			child.WatchType = "node_value"
+			return child
+		}
+
+		for _, item := range added {
+			go rc.monitoringData(getChildMonitorConfig(p+"/"+item, config))
+		}
+
+		for _, item := range deleted {
+			go rc.removeMonitorConfigChangeListner(getChildMonitorConfig(p+"/"+item, config))
+		}
+	})
+}
+
+func (rc *MWServer) monitoringNodes(config *MonitorConfig) {
+	defer rc.recover()
+	// 添加到已监控路径列表
+	if !config.outOfConfigMap {
+		rc.monitorConfigs.Set(config.getKey(), config)
+	}
+
+	rc.clusterClient.WatchChildrenChangedAndNotifyNow(config.Path, func(children []string, err error) {
+		//rc.Log.Infof("——> PATH监控：【%s】的子节点发生变化:%v", config.Path, children)
+		if err != nil {
+			rc.Log.Errorf("监控节点%s异常：%v", config.Path, err)
+			return
+		}
+		go rc.monitoringCore(fmt.Sprint(len(children)), config)
+	})
+}
+
+func (rc *MWServer) monitoringData(config *MonitorConfig) {
+	// 添加到已监控路径列表
+	if !config.outOfConfigMap {
+		rc.monitorConfigs.Set(config.getKey(), config)
+	}
+
+	rc.clusterClient.WatchValueChangedAndNotifyNow(config.Path, func(value string, err error) {
+		//rc.Log.Infof("——> PATH监控：【%s】的值发生变化", config.Path)
+		if err != nil {
+			rc.Log.Errorf("监控节点%s异常：%v", config.Path, err)
+			return
+		}
+		go rc.monitoringCore(value, config)
+	})
+}
+
+func (rc *MWServer) monitoringCore(raw string, _pathConfig *MonitorConfig) {
+	defer rc.recover()
+
+	for prop, rules := range _pathConfig.Properties {
+		level, currval, limitval, ip := validate(prop, raw, rules)
+
+		if err := rc.sendToInfluxDB(prop, _pathConfig.SystemName, ip, _pathConfig.Path, currval); err != nil {
+			fmt.Println("保存到InfluxDB异常：", err)
+		}
+
+		if level == "" {
+			rc.Log.Info("TODO：这里要考虑是否发送恢复消息")
+			continue
+		}
+
+		msg := getWarningMessage(&WarningMessageEntity{level: level,
+			property: prop, path: _pathConfig.Path, sysname: _pathConfig.SystemName, currval: currval,
+			limitval: limitval, messagetpl: _pathConfig.TplMsgs[prop],
+			ip: ip})
+
+		// 避免同一台机器的cpu,memory,disk的重复报警
+		isContain, err := regexp.MatchString("^cpu|memory|disk$", prop)
+		if err == nil && isContain {
+			key := ip + "_" + prop
+			saveDate, isExists := rc.sameIPWarningMessages.Get(key)
+			if isExists {
+				diff, _ := timeSubNowSeconds(saveDate.(string))
+				if 0-diff <= 5 {
+					rc.Log.Infof("5秒内，相同IP的相同属性报警，被忽略:%s", key)
+					rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 更新时间戳
+					continue
+				}
+			} else {
+				rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 设置到map
+			}
+		}
+
+		if err := rc.sendToWarningSystem(_pathConfig.SystemName, prop, level, msg, ip); err != nil {
+			fmt.Println(err)
+		}
+
+	}
+}
+
 func (rc *MWServer) removeSystemConfigChangeListner(systemName string) {
-	if _, ok := rc.monitorSystems.Get(systemName); !ok {
+	d, isExists := rc.monitorSystems.Get(systemName)
+	if !isExists {
+		rc.Log.Errorf("系统【%s】的配置不在MAP[monitorSystems]中", systemName)
 		return
 	}
 
-	rc.Log.Infof("TODO:移除对【%s】系统配置的监控", systemName)
+	// 移除系统级别的节点的监控
+	rc.Log.Infof("移除对【%s】系统本身配置的监控", systemName)
+	rc.monitorSystems.Delete(systemName)
+	rc.clusterClient.handler.RemoveWatchValue(d.(string))
 
+	// 移除系统下的所有已注册监控
 	configs := rc.monitorConfigs.GetAll()
 	for _, item := range configs {
 		c := item.(*MonitorConfig)
@@ -165,10 +294,40 @@ func (rc *MWServer) removeSystemConfigChangeListner(systemName string) {
 	}
 }
 
+func (rc *MWServer) removeMonitorConfigChangeListner(config *MonitorConfig) {
+	defer rc.recover()
+	if config.outOfConfigMap {
+		return
+	}
+
+	rc.Log.Infof("移除对【%s】系统下的路径【%s】【%s】的监控", config.SystemName, config.Path, config.WatchType)
+	rc.monitorConfigs.Delete(config.getKey())
+
+	switch config.WatchType {
+	case "children_count":
+		rc.clusterClient.handler.RemoveWatchChildren(config.Path)
+	case "children_value":
+		// 移除对该节点的子节点的监控
+		rc.clusterClient.handler.RemoveWatchChildren(config.Path)
+		// 遍历移除对其子节点的值的监控
+		if c, isExists := rc.monitorChildrenValue.GetAndDel(config.getKey()); isExists {
+			if children, isOk := c.([]string); isOk {
+				for _, child := range children {
+					rc.Log.Infof("移除对【%s】的ChildrenValue：【%s】的监控", config.Path, child)
+					rc.clusterClient.handler.RemoveWatchValue(config.Path + "/" + child)
+				}
+			}
+		}
+	case "node_value":
+		rc.clusterClient.handler.RemoveWatchValue(config.Path)
+	default:
+		panic(fmt.Errorf("UNREACHABLE:未处理的监控类型:%s", config.WatchType))
+	}
+}
+
 func (rc *MWServer) watchWarningConfigChange() {
 	path := rc.clusterClient.warningConfigPath
 	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(configStr string, err error) {
-		rc.Log.Infof(":报警配置【%s】的值发生了变化", path)
 		if err != nil {
 			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
 			return
@@ -183,11 +342,6 @@ func (rc *MWServer) watchWarningConfigChange() {
 	})
 }
 
-func (rc *MWServer) removeMonitorConfigChangeListner(config *MonitorConfig) {
-	rc.Log.Infof("TODO:移除对【%s】系统下的路径【%s】【%s】的监控", config.SystemName, config.Path, config.WatchType)
-	rc.monitorConfigs.Delete(config.getKey())
-}
-
 func (rc *MWServer) getMemcachedClient() (memcacheClient *mem.MemcacheClient, err error) {
 	memcacheConfig, err := rc.clusterClient.GetDBConfig("memcached")
 	if err != nil {
@@ -200,7 +354,7 @@ func (rc *MWServer) getMemcachedClient() (memcacheClient *mem.MemcacheClient, er
 	return memcacheClient, nil
 }
 
-func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg string) (err error) {
+func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg, ip string) (err error) {
 
 	subscribeGroups := []string{}
 
@@ -229,7 +383,7 @@ func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg string)
 		}
 		for memberName, member := range group.Members {
 
-			cachekey := fmt.Sprintf("%s_%s_%s_%s", systemName, property, level, memberName) // 同一个系统，同一个属性，同一个级别，同一个人，在指定的频率内只发送一次
+			cachekey := fmt.Sprintf("%s_%s_%s_%s_%s", systemName, ip, property, level, memberName) // 同一个系统，同一个IP，同一个属性，同一个级别，同一个人，在指定的频率内只发送一次
 
 			if memcacheClient != nil {
 				if memcacheClient.Get(cachekey) != "" {
@@ -277,92 +431,6 @@ func (rc *MWServer) IsMasterServer(items []*MWServerItem) bool {
 	}
 	sort.Sort(sort.StringSlice(servers))
 	return len(servers) == 0 || strings.EqualFold(rc.snap.path, servers[0])
-}
-
-func (rc *MWServer) monitoringNodesData(config *MonitorConfig) {
-	defer rc.recover()
-	p := config.Path
-	rc.clusterClient.WatchChildrenChangedAndNotifyNow(p, func(children []string, err error) {
-		rc.Log.Infof("->PATH监控(s)：【%s】的子节点发生改变:%v", p, children)
-		if err != nil {
-			rc.Log.Errorf("监控节点%s异常：%v", p, err)
-			return
-		}
-		for _, nodeName := range children {
-			childPath := p + "/" + nodeName
-			rc.clusterClient.WatchValueChangedAndNotifyNow(childPath, func(value string, err error) {
-				rc.Log.Infof("->PATH监控(s)：【%s】的子节点【%s】值发生改变:%v", p, nodeName, value)
-				if err != nil {
-					rc.Log.Errorf("监控节点%s的值异常:%v", p, err)
-					return
-				}
-				go rc.monitoringCore(value, config)
-			})
-		}
-	})
-}
-
-func (rc *MWServer) monitoringNodes(config *MonitorConfig) {
-	rc.clusterClient.WatchChildrenChangedAndNotifyNow(config.Path, func(children []string, err error) {
-		rc.Log.Infof("->PATH监控：【%s】的子节点发生变化:%v", config.Path, children)
-		if err != nil {
-			rc.Log.Errorf("监控节点%s异常：%v", config.Path, err)
-			return
-		}
-		go rc.monitoringCore(fmt.Sprint(len(children)), config)
-	})
-}
-
-func (rc *MWServer) monitoringData(config *MonitorConfig) {
-	rc.clusterClient.WatchValueChangedAndNotifyNow(config.Path, func(value string, err error) {
-		rc.Log.Infof("->PATH监控：【%s】的值发生变化:%v", config.Path, value)
-		if err != nil {
-			rc.Log.Errorf("监控节点%s异常：%v", config.Path, err)
-			return
-		}
-		go rc.monitoringCore(value, config)
-	})
-}
-
-func (rc *MWServer) monitoringCore(raw string, _pathConfig *MonitorConfig) {
-	defer rc.recover()
-
-	for prop, rules := range _pathConfig.Properties {
-		level, currval, limitval, ip := validate(prop, raw, rules)
-		if level == "" {
-			fmt.Println("TODO：这里要考虑是否发送恢复消息")
-			continue
-		}
-
-		msg := getWarningMessage(&WarningMessageEntity{level: level,
-			property: prop, path: _pathConfig.Path, sysname: _pathConfig.SystemName, currval: currval,
-			limitval: limitval, messagetpl: _pathConfig.TplMsgs[prop],
-			ip: ip})
-
-		// 避免同一台机器的cpu,memory,disk的重复报警
-		if isContain, err := regexp.MatchString("^cpu|memory|disk$", prop); err == nil && isContain {
-			key := ip + "_" + prop
-			saveDate, isExists := rc.sameIPWarningMessages.Get(key)
-			if isExists {
-				diff, _ := timeSubNowSeconds(saveDate.(string))
-				if 0-diff <= 5 {
-					fmt.Println("5秒内，相同IP的相同属性报警，忽略:", key)
-					rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 更新时间戳
-					continue
-				}
-			} else {
-				rc.sameIPWarningMessages.Set(key, getNowTimeStamp()) // 设置到map
-			}
-		}
-
-		if err := rc.sendToWarningSystem(_pathConfig.SystemName, prop, level, msg); err != nil {
-			fmt.Println(err)
-		}
-		if err := rc.sendToInfluxDB(prop, _pathConfig.SystemName, ip, _pathConfig.Path, currval); err != nil {
-			fmt.Println("保存到InfluxDB异常：", err)
-		}
-
-	}
 }
 
 type MonitorData struct {

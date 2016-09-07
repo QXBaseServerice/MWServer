@@ -49,8 +49,8 @@ type MWClusterClient struct {
 	IP          string
 }
 
-//IClusterHandler 集群管理处理程序，用于处理与集群管理器如(zk,etcd)等之前的通信
 type IClusterHandler interface {
+	Open()
 	Exists(path ...string) (string, bool)
 	CreateNode(path string, data string) error
 	CreateSeqNode(path string, data string) (string, error)
@@ -60,6 +60,8 @@ type IClusterHandler interface {
 	GetChildren(path string) ([]string, error)
 	WatchValue(path string, data chan string) error
 	WatchChildren(path string, data chan []string) error
+	RemoveWatchValue(path string)
+	RemoveWatchChildren(path string)
 	WaitForConnected() bool
 	WaitForDisconnected() bool
 	Delete(path string) error
@@ -165,9 +167,7 @@ func (client *MWClusterClient) WatchValueChangedAndNotifyNow(path string, callba
 			}()
 		}
 	})
-	client.Log.Infof("::监控:%s的变化", path)
 	client.WatchClusterValueChange(path, func() {
-		client.Log.Infof(" -> config:%s 值发生变化", path)
 		go func() {
 			defer client.recover()
 			callback(client.handler.GetValue(path))
@@ -208,7 +208,6 @@ func (client *MWClusterClient) WatchChildrenChangedAndNotifyNow(path string, cal
 			}()
 		}
 	})
-	client.Log.Infof("::监控node>chanildren:%s的变化", path)
 	client.WatchClusterChildrenChange(path, func() {
 		client.Log.Infof(" -> node:%s 节点发生变化", path)
 		go func() {
@@ -255,7 +254,7 @@ func (client *MWClusterClient) WatchServerChange(callback func([]*MWServerItem, 
 
 	client.WaitClusterPathExists(client.mwServerRoot, client.timeout, func(path string, exists bool) {
 		if !exists {
-			client.Log.Errorf("rc servers:%s未配置或不存在", client.mwServerRoot)
+			client.Log.Errorf("mw servers:%s未配置或不存在", client.mwServerRoot)
 		} else {
 			go func() {
 				defer client.recover()
@@ -263,9 +262,9 @@ func (client *MWClusterClient) WatchServerChange(callback func([]*MWServerItem, 
 			}()
 		}
 	})
-	client.Log.Infof("::监控rc servers:%s的变化", client.mwServerRoot)
+	client.Log.Infof("::监控mw servers:%s的变化", client.mwServerRoot)
 	client.WatchClusterChildrenChange(client.mwServerRoot, func() {
-		client.Log.Infof(" -> rc servers:%s 值发生变化", client.mwServerRoot)
+		client.Log.Infof(" -> mw servers:%s 值发生变化", client.mwServerRoot)
 		go func() {
 			defer client.recover()
 			callback(client.GetAllRCServers())
@@ -278,7 +277,7 @@ func (client *MWClusterClient) GetAllRCServers() (servers []*MWServerItem, err e
 	rcs, err := client.handler.GetChildren(client.mwServerRoot)
 
 	if err != nil {
-		client.Log.Errorf(" -> 获取所有rc servers 出错:%s,%v", client.mwServerRoot, err)
+		client.Log.Errorf(" -> 获取所有mw servers 出错:%s,%v", client.mwServerRoot, err)
 		return
 	}
 	servers = []*MWServerItem{}
@@ -286,7 +285,7 @@ func (client *MWClusterClient) GetAllRCServers() (servers []*MWServerItem, err e
 		rcPath := fmt.Sprintf("%s/%s", client.mwServerRoot, v)
 		config, err := client.GetMWServerValue(rcPath)
 		if err != nil {
-			client.Log.Errorf(" -> 获取rc server数据有误:%v", err)
+			client.Log.Errorf(" -> 获取mw server数据有误:%v", err)
 			continue
 		}
 		if len(config.Address) > 0 {
@@ -301,13 +300,13 @@ func (client *MWClusterClient) GetMWServerValue(path string) (value *MWServerIte
 	content, err := client.handler.GetValue(path)
 
 	if err != nil {
-		client.Log.Errorf(" -> rc server:%s 获取server数据有误", path)
+		client.Log.Errorf(" -> mw server:%s 获取server数据有误", path)
 		return nil, err
 	}
 	value = &MWServerItem{}
 	err = json.Unmarshal([]byte(content), &value)
 	if err != nil {
-		client.Log.Errorf(" -> rc server:%s json格式有误", content)
+		client.Log.Errorf(" -> mw server:%s json格式有误", content)
 		return nil, err
 	}
 	value.Path = path
