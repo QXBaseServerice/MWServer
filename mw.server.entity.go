@@ -76,6 +76,13 @@ type WarningMember struct {
 	Frequency  int
 }
 
+/*------------- Zookeeper中的 系统信息配置 -------------*/
+
+type SystemInfo struct {
+	FullName string `json:"full_name"`
+	Domain   string
+}
+
 /*type WarningGroup struct {
 	GroupName string
 	FullName  string

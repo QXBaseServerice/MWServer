@@ -17,6 +17,7 @@ const (
 	p_mwServerRoot                = "@domain/servers"
 	p_monitorConfig               = "@domain/monitoring"
 	p_warningConfig               = "@domain/config/warning"
+	p_systemInfoConfig            = "@domain/config/system"
 	p_varConfig                   = "@domain/var/@type/@name"
 	p_mwServerMWClusterClientBase = "@domain/servers/mw_"
 )
@@ -28,9 +29,10 @@ type MWClusterClient struct {
 	//appTaskRoot         string
 	//appServerTaskPath   string
 
-	mwServerRoot      string
-	monitorConfigPath string
-	warningConfigPath string
+	mwServerRoot         string
+	monitorConfigPath    string
+	warningConfigPath    string
+	systemInfoConfigPath string
 
 	rcServerConfig      string
 	jobConfigPath       string
@@ -83,6 +85,7 @@ func NewMWClusterClient(domain string, ip string, handler IClusterHandler, logge
 	client.mwServerRoot = client.dataMap.Translate(p_mwServerRoot)
 	client.monitorConfigPath = client.dataMap.Translate(p_monitorConfig)
 	client.warningConfigPath = client.dataMap.Translate(p_warningConfig)
+	client.systemInfoConfigPath = client.dataMap.Translate(p_systemInfoConfig)
 
 	//client.appServerTaskPath = client.dataMap.Translate(p_appTaskConfig)
 	//client.appTaskRoot = client.dataMap.Translate(p_appTaskRoot)

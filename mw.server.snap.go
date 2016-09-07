@@ -57,7 +57,7 @@ func (rs MWSnap) GetServicesSnap(services map[string]interface{}) string {
 }
 
 //startRefreshSnap 启动定时刷新
-func (rc *MWServer) startRefreshSnap() {
+func (rc *MWServer) startRefreshSnap(p ...interface{}) {
 	defer rc.recover()
 	snap.Bind(time.Second*time.Duration(rc.snap.Refresh), rc.updateSnap)
 }

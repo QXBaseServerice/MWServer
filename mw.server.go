@@ -17,8 +17,9 @@ type MWServer struct {
 	monitorSystems        *concurrent.ConcurrentMap // 正在被监控的系统 map[string]string => sysName:zkPath
 	monitorConfigs        *concurrent.ConcurrentMap // 正在被监控的路径 map[string]MonitorConfig
 	monitorChildrenValue  *concurrent.ConcurrentMap // 被监控节点的子节点的集合(应用于记录watch_type:children_value类型的差异化计算) map[string][]string => "grs/cross/sp/servers:node_value":[mw_00001,mw_00002]
-	warningConfig         WarningConfig             // 报警配置
 	sameIPWarningMessages *concurrent.ConcurrentMap // 同一个IP的报警消息(有效期内只发送一次)
+	warningConfig         WarningConfig             // 报警配置
+	systemsInfo           map[string]SystemInfo     // 系统信息
 	clusterClient         *MWClusterClient
 	startSync             base.Sync
 	clusterServers        []string
@@ -97,6 +98,13 @@ func (rc *MWServer) Start() (err error) {
 		rc.Log.Errorf(" -> rc.BindMWServer异常:%v", err)
 		return
 	}
+
+	rc.startSync.WaitAndAdd(2)
+	go rc.watchSystemInfoChange()
+	go rc.watchWarningConfigChange()
+
+	rc.startSync.WaitAndAdd(1)
+	go rc.watchSystemNodesChange()
 
 	rc.startSync.Wait()
 	go rc.startRefreshSnap()

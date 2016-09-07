@@ -34,19 +34,13 @@ func (rc *MWServer) BindMWServer() (err error) {
 	}
 
 	rc.clusterClient.WatchServerChange(func(items []*MWServerItem, err error) {
-
-		defer rc.startSync.Done("INIT.SERVER")
-
+		defer rc.startSync.Done("INIT.Server")
 		isMaster := rc.IsMasterServer(items)
 		if isMaster && !rc.IsMaster {
 			rc.IsMaster = true
 			rc.snap.Server = cluster.SERVER_MASTER
 			rc.setDefSnap()
 			rc.Log.Info(" -> 当前服务是 [", rc.snap.Server, "]")
-
-			go rc.watchSystemNodesChange()
-			go rc.watchWarningConfigChange()
-
 		} else if !isMaster {
 			rc.IsMaster = false
 			rc.snap.Server = cluster.SERVER_SLAVE
@@ -61,15 +55,13 @@ func (rc *MWServer) BindMWServer() (err error) {
 func (rc *MWServer) watchSystemNodesChange() {
 	path := rc.clusterClient.monitorConfigPath
 	rc.clusterClient.WatchChildrenChangedAndNotifyNow(path, func(systemNameList []string, err error) {
-		//rc.Log.Infof("——> 系统【%s】的子节点发生了变化:%v", path, systemNameList)
+		rc.startSync.Done("LOADING.EverySystemConfig")
 		if err != nil {
 			rc.Log.Errorf("系统%s的监控异常：%v", path, err)
 			return
 		}
 
 		added, delted := getArrDifferentFromMap(rc.monitorSystems.GetAll(), systemNameList)
-		//rc.Log.Infof("增加系统：%v", added)
-		//rc.Log.Infof("移除系统：%v", delted)
 
 		for _, systemName := range added {
 			p := fmt.Sprintf("%s/%s", path, systemName)
@@ -87,7 +79,6 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 	rc.monitorSystems.Set(systemName, path)
 
 	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(jsonstr string, err error) {
-		//rc.Log.Infof("——> 监控系统【%s】的配置值发生了变化", path)
 		if err != nil {
 			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
 			return
@@ -104,24 +95,28 @@ func (rc *MWServer) watchSystemConfigChange(systemName, path string) {
 		newPathConfigs := concurrent.NewConcurrentMap()
 		for i, len := 0, len(m); i < len; i++ {
 			for _, item := range m[i].Paths {
+
+				c := &MonitorConfig{
+					Path: item, SystemName: systemName, SystemFullName: rc.systemsInfo[systemName].FullName, WatchType: m[i].WatchType,
+					Properties: m[i].Properties, TplMsgs: m[i].Msgs}
+
 				if !strings.HasSuffix(item, "/*") {
-					c := &MonitorConfig{
-						Path: item, SystemName: systemName, SystemFullName: "未设置", WatchType: m[i].WatchType,
-						Properties: m[i].Properties, TplMsgs: m[i].Msgs}
 					newPathConfigs.Set(c.getKey(), c)
 					continue
+				} else {
+					// TODO:暂时不考虑路径中配置“/*”的支持
+					// 因为没有监控/*之前的节点变化，后续/*下面增加了子节点，将无法被监听(带有一定复杂性)
+					panic(fmt.Errorf("请不要在路径【%s】中配置：“/*”", item))
 				}
-
-				childrens, err := rc.clusterClient.handler.GetChildren(strings.TrimRight(item, "/*"))
+				/*childrens, err := rc.clusterClient.handler.GetChildren(strings.TrimRight(item, "/*"))
 				if err != nil {
+					rc.Log.Errorf("%s没有子节点", strings.TrimRight(item, "/*"))
 					continue
 				}
 				for _, child := range childrens {
-					c := &MonitorConfig{
-						Path: strings.TrimRight(item, "*") + child, SystemName: systemName, SystemFullName: "未设置", WatchType: m[i].WatchType,
-						Properties: m[i].Properties, TplMsgs: m[i].Msgs}
+					c.Path = strings.TrimRight(item, "*") + child
 					newPathConfigs.Set(c.getKey(), c)
-				}
+				}*/
 			}
 		}
 
@@ -328,6 +323,7 @@ func (rc *MWServer) removeMonitorConfigChangeListner(config *MonitorConfig) {
 func (rc *MWServer) watchWarningConfigChange() {
 	path := rc.clusterClient.warningConfigPath
 	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(configStr string, err error) {
+		defer rc.startSync.Done("LOADED.WarningConfig")
 		if err != nil {
 			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
 			return
@@ -342,16 +338,20 @@ func (rc *MWServer) watchWarningConfigChange() {
 	})
 }
 
-func (rc *MWServer) getMemcachedClient() (memcacheClient *mem.MemcacheClient, err error) {
-	memcacheConfig, err := rc.clusterClient.GetDBConfig("memcached")
-	if err != nil {
-		return nil, err
-	}
-	memcacheClient, err = mem.New(memcacheConfig)
-	if err != nil {
-		return nil, err
-	}
-	return memcacheClient, nil
+func (rc *MWServer) watchSystemInfoChange() {
+	path := rc.clusterClient.systemInfoConfigPath
+	rc.clusterClient.WatchValueChangedAndNotifyNow(path, func(configStr string, err error) {
+		defer rc.startSync.Done("LOADED.SystemInfo")
+		if err != nil {
+			rc.Log.Errorf("节点%s的监控异常：%v", path, err)
+			return
+		}
+		var c map[string]SystemInfo
+		if err := json.Unmarshal([]byte(configStr), &c); err != nil {
+			panic(fmt.Errorf("%s的值无法解析为map[string]SystemInfo(非法JSON)", path))
+		}
+		rc.systemsInfo = c
+	})
 }
 
 func (rc *MWServer) sendToWarningSystem(systemName, property, level, msg, ip string) (err error) {
@@ -473,4 +473,16 @@ func (rc *MWServer) getInfluxClient() (influxClient *influxdb.InfluxDB, err erro
 		return nil, err
 	}
 	return influxClient, nil
+}
+
+func (rc *MWServer) getMemcachedClient() (memcacheClient *mem.MemcacheClient, err error) {
+	memcacheConfig, err := rc.clusterClient.GetDBConfig("memcached")
+	if err != nil {
+		return nil, err
+	}
+	memcacheClient, err = mem.New(memcacheConfig)
+	if err != nil {
+		return nil, err
+	}
+	return memcacheClient, nil
 }
