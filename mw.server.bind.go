@@ -34,13 +34,16 @@ func (rc *MWServer) BindMWServer() (err error) {
 	}
 
 	rc.clusterClient.WatchServerChange(func(items []*MWServerItem, err error) {
-		defer rc.startSync.Done("INIT.Server")
 		isMaster := rc.IsMasterServer(items)
 		if isMaster && !rc.IsMaster {
 			rc.IsMaster = true
 			rc.snap.Server = cluster.SERVER_MASTER
 			rc.setDefSnap()
 			rc.Log.Info(" -> 当前服务是 [", rc.snap.Server, "]")
+
+			go rc.watchSystemInfoChange()
+			go rc.watchWarningConfigChange()
+			go rc.watchSystemNodesChange()
 		} else if !isMaster {
 			rc.IsMaster = false
 			rc.snap.Server = cluster.SERVER_SLAVE

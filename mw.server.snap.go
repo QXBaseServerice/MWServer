@@ -6,6 +6,7 @@ import (
 
 	"github.com/arsgo/ars/snap"
 	"github.com/arsgo/lib4go/sysinfo"
+	"github.com/axgle/mahonia"
 )
 
 //MWSnap RC server快照信息
@@ -36,24 +37,17 @@ func (rs MWSnap) GetServicesSnap(services map[string]interface{}) string {
 		services["systems"] = rs.mwServer.monitorSystems.GetAll()
 	}
 	if rs.mwServer.monitorConfigs.GetLength() > 0 {
-		services["paths"] = getAllKeys(rs.mwServer.monitorConfigs)
+		services["paths"] = rs.mwServer.monitorConfigs.GetAll()
 	}
 	if rs.mwServer.monitorChildrenValue.GetLength() > 0 {
 		services["children"] = rs.mwServer.monitorChildrenValue.GetAll()
 	}
 
-	/*rpcs := rs.mwServer.rpcServerCollector.Get()
-	if len(rpcs) > 0 {
-		services["rpc"] = rpcs
-	}*/
-	/*schedulers := rs.mwServer.schedulerCollector.Get()
-	if len(schedulers) > 0 {
-		services["jobs"] = schedulers
-	}*/
 	snap.Monitoring = services
 
 	buffer, _ := json.Marshal(&snap)
-	return string(buffer)
+	enc := mahonia.NewEncoder("gbk")
+	return enc.ConvertString(string(buffer))
 }
 
 //startRefreshSnap 启动定时刷新

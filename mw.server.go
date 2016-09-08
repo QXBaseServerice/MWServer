@@ -41,7 +41,7 @@ func NewMWServer(conf *config.SysConfig) (rc *MWServer, err error) {
 	rc.sameIPWarningMessages = concurrent.NewConcurrentMap()
 	rc.monitorChildrenValue = concurrent.NewConcurrentMap()
 
-	rc.startSync = base.NewSync(1)
+	rc.startSync = base.NewSync(3)
 	rc.Log, err = logger.Get(rc.loggerName)
 	if err != nil {
 		return
@@ -98,13 +98,6 @@ func (rc *MWServer) Start() (err error) {
 		rc.Log.Errorf(" -> rc.BindMWServer异常:%v", err)
 		return
 	}
-
-	rc.startSync.WaitAndAdd(2)
-	go rc.watchSystemInfoChange()
-	go rc.watchWarningConfigChange()
-
-	rc.startSync.WaitAndAdd(1)
-	go rc.watchSystemNodesChange()
 
 	rc.startSync.Wait()
 	go rc.startRefreshSnap()
