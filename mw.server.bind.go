@@ -41,6 +41,7 @@ func (rc *MWServer) BindMWServer() (err error) {
 			rc.setDefSnap()
 			rc.Log.Info(" -> 当前服务是 [", rc.snap.Server, "]")
 
+			go rc.watchRCServerChange()
 			go rc.watchSystemInfoChange()
 			go rc.watchWarningConfigChange()
 			go rc.watchSystemNodesChange()
@@ -53,6 +54,28 @@ func (rc *MWServer) BindMWServer() (err error) {
 	})
 
 	return nil
+}
+func (rc *MWServer) watchRCServerChange() {
+	rc.clusterClient.WatchRCServerChange(func(config []*RCServerItem, err error) {
+		defer rc.startSync.Done("LOADED.WatchRCServerChange")
+		if err != nil {
+			rc.Log.Error("监听RCServer异常,err:", err)
+			return
+		}
+		var tasks []string
+		for _, v := range config {
+			tasks = append(tasks, v.Address)
+		}
+		services := make(map[string][]string)
+		services["*"] = tasks
+		if len(tasks) == 0 {
+			rc.Log.Error(" -> 没有可用的 rc server")
+		} else {
+			rc.Log.Info("::bind rc server ", tasks)
+		}
+		rc.rpcClient.ResetRPCServer(services)
+		return
+	})
 }
 
 func (rc *MWServer) watchSystemNodesChange() {

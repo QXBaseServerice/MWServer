@@ -20,6 +20,7 @@ const (
 	p_systemInfoConfig            = "@domain/config/system"
 	p_varConfig                   = "@domain/var/@type/@name"
 	p_mwServerMWClusterClientBase = "@domain/servers/mw_"
+	p_rcServerRoot                = "@domain/rc/servers"
 )
 
 //MWClusterClient 集群客户端
@@ -42,13 +43,14 @@ type MWClusterClient struct {
 	spServerTaskPath    string
 	closeChans          *concurrent.ConcurrentMap
 	//lastRPCServices     RPCServices
-	publishLock sync.Mutex
-	configCache *concurrent.ConcurrentMap
-	handler     IClusterHandler
-	Log         logger.ILogger
-	timeout     time.Duration
-	dataMap     utility.DataMap
-	IP          string
+	publishLock  sync.Mutex
+	configCache  *concurrent.ConcurrentMap
+	handler      IClusterHandler
+	Log          logger.ILogger
+	timeout      time.Duration
+	dataMap      utility.DataMap
+	IP           string
+	rcServerRoot string
 }
 
 type IClusterHandler interface {
@@ -86,6 +88,7 @@ func NewMWClusterClient(domain string, ip string, handler IClusterHandler, logge
 	client.monitorConfigPath = client.dataMap.Translate(p_monitorConfig)
 	client.warningConfigPath = client.dataMap.Translate(p_warningConfig)
 	client.systemInfoConfigPath = client.dataMap.Translate(p_systemInfoConfig)
+	client.rcServerRoot = client.dataMap.Translate(p_rcServerRoot)
 
 	//client.appServerTaskPath = client.dataMap.Translate(p_appTaskConfig)
 	//client.appTaskRoot = client.dataMap.Translate(p_appTaskRoot)
@@ -261,7 +264,7 @@ func (client *MWClusterClient) WatchServerChange(callback func([]*MWServerItem, 
 		} else {
 			go func() {
 				defer client.recover()
-				callback(client.GetAllRCServers())
+				callback(client.GetAllMWServers())
 			}()
 		}
 	})
@@ -270,13 +273,13 @@ func (client *MWClusterClient) WatchServerChange(callback func([]*MWServerItem, 
 		client.Log.Infof(" -> mw servers:%s 值发生变化", client.mwServerRoot)
 		go func() {
 			defer client.recover()
-			callback(client.GetAllRCServers())
+			callback(client.GetAllMWServers())
 		}()
 	})
 }
 
-//GetAllRCServers 获取所有RC服务器信息
-func (client *MWClusterClient) GetAllRCServers() (servers []*MWServerItem, err error) {
+//GetAllMWServers 获取所有MW服务器信息
+func (client *MWClusterClient) GetAllMWServers() (servers []*MWServerItem, err error) {
 	rcs, err := client.handler.GetChildren(client.mwServerRoot)
 
 	if err != nil {
@@ -388,4 +391,82 @@ func (client *MWClusterClient) GetDBConfig(name string) (string, error) {
 }
 func (client *MWClusterClient) GetSMSConfig(name string) (string, error) {
 	return client.GetSourceConfig("sms", name)
+}
+
+/************************ 因要用RPC调用其他的sp服务，所以需要获取RCSERVER *************************/
+
+//WatchRCServerChange 监控RC服务器变化,变化后回调指定函数
+func (client *MWClusterClient) WatchRCServerChange(callback func([]*RCServerItem, error)) {
+	client.WaitClusterPathExists(client.rcServerRoot, client.timeout, func(path string, exists bool) {
+		if !exists {
+			client.Log.Errorf("rc servers:%s未配置或不存在", client.rcServerRoot)
+		} else {
+			go func() {
+				defer client.recover()
+				callback(client.GetAllRCServers())
+			}()
+		}
+	})
+	client.Log.Infof("::监控rc servers:%s的变化", client.rcServerRoot)
+	client.WatchClusterChildrenChange(client.rcServerRoot, func() {
+		client.Log.Infof(" -> rc servers:%s 值发生变化", client.rcServerRoot)
+		go func() {
+			defer client.recover()
+			callback(client.GetAllRCServers())
+		}()
+	})
+}
+
+type RCServerItem struct {
+	Domain  string
+	Address string
+	Server  string
+	Path    string
+}
+
+//GetAllRCServers 获取所有RC服务器信息
+func (client *MWClusterClient) GetAllRCServers() (servers []*RCServerItem, err error) {
+	rcs, err := client.handler.GetChildren(client.rcServerRoot)
+	if err != nil {
+		client.Log.Errorf(" -> 获取所有rc servers 出错:%s,%v", client.rcServerRoot, err)
+		return
+	}
+	servers = []*RCServerItem{}
+	for _, v := range rcs {
+		rcPath := fmt.Sprintf("%s/%s", client.rcServerRoot, v)
+		config, err := client.GetRCServerValue(rcPath)
+		if err != nil {
+			client.Log.Errorf(" -> 获取rc server数据有误:%v", err)
+			continue
+		}
+		if len(config.Address) > 0 {
+			servers = append(servers, config)
+		}
+	}
+	return
+}
+
+//GetRCServerValue 获取RC服务器信息
+func (client *MWClusterClient) GetRCServerValue(path string) (value *RCServerItem, err error) {
+	content, err := client.handler.GetValue(path)
+	if err != nil {
+		client.Log.Errorf(" -> rc server:%s 获取server数据有误", path)
+		return
+	}
+	value = &RCServerItem{}
+	err = json.Unmarshal([]byte(content), &value)
+	if err != nil {
+		client.Log.Errorf(" -> rc server:%s json格式有误", content)
+		return
+	}
+	value.Path = path
+	return
+}
+
+//GetServiceFullPath 获了服务的全名
+func (client *MWClusterClient) GetServiceFullPath(name string) string {
+	if strings.Contains(name, "@") {
+		return name
+	}
+	return name + client.domainPath
 }

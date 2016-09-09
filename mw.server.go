@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"runtime/debug"
 	"time"
 
@@ -21,6 +22,7 @@ type MWServer struct {
 	warningConfig         WarningConfig             // 报警配置
 	systemsInfo           map[string]SystemInfo     // 系统信息
 	clusterClient         *MWClusterClient
+	rpcClient             *RPCClient //RPC远程调用客户端,调用RC Server提供的RPC服务
 	startSync             base.Sync
 	clusterServers        []string
 	IsMaster              bool
@@ -41,7 +43,7 @@ func NewMWServer(conf *config.SysConfig) (rc *MWServer, err error) {
 	rc.sameIPWarningMessages = concurrent.NewConcurrentMap()
 	rc.monitorChildrenValue = concurrent.NewConcurrentMap()
 
-	rc.startSync = base.NewSync(3)
+	rc.startSync = base.NewSync(4)
 	rc.Log, err = logger.Get(rc.loggerName)
 	if err != nil {
 		return
@@ -70,6 +72,9 @@ func (rc *MWServer) init() (err error) {
 	if err != nil {
 		return err
 	}
+
+	rc.rpcClient = NewRPCClient(*rc.clusterClient, rc.loggerName)
+
 	//rc.spRPCClient = rpc.NewRPCClient(rc.clusterClient, rc.loggerName)
 	rc.snap = MWSnap{Domain: rc.conf.Domain, Server: cluster.SERVER_UNKNOWN, Version: rc.version, Refresh: 60, mwServer: rc}
 	//rc.rcRPCHandler = proxy.NewRPCClientProxy(rc.clusterClient, rc.spRPCClient, rc.loggerName)
@@ -101,9 +106,15 @@ func (rc *MWServer) Start() (err error) {
 
 	rc.startSync.Wait()
 	go rc.startRefreshSnap()
+
 	//go rc.startMonitor()
 	//go rc.clearMem()
 	rc.Log.Info(" -> mw server 启动完成...")
+
+	// 测试调用RPC
+	result, err := rc.rpcClient.Request("user.test", "", "20160908")
+	fmt.Println(result, err)
+
 	return
 }
 
@@ -113,11 +124,13 @@ func (rc *MWServer) Stop() error {
 	defer rc.recover()
 	//rc.clusterClient.CloseMWServer(rc.snap.path)
 	rc.clusterClient.Close()
+	rc.rpcClient.Close()
 	/*cross := rc.crossDomain.GetAll()
 	for _, v := range cross {
 		cls := v.(cluster.IClusterClient)
 		cls.Close()
 	}*/
+
 	return nil
 }
 
